@@ -1,18 +1,27 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
-	"log"
 	"net/http"
 
-	emailVerifier "github.com/AfterShip/email-verifier"
-	"github.com/julienschmidt/httprouter"
+	emailverifier "github.com/AfterShip/email-verifier"
+
+	"github.com/aws/aws-lambda-go/events"
+	"github.com/aws/aws-lambda-go/lambda"
+	"github.com/awslabs/aws-lambda-go-api-proxy/core"
+	"github.com/awslabs/aws-lambda-go-api-proxy/gorillamux"
+	"github.com/gorilla/mux"
 )
 
-func GetEmailVerification(w http.ResponseWriter, r *http.Request, ps httprouter.Params) {
-	verifier := emailVerifier.NewVerifier()
-	ret, err := verifier.Verify(ps.ByName("email"))
+var (
+	verifier = emailverifier.NewVerifier()
+)
+
+func GetEmailVerification(w http.ResponseWriter, r *http.Request) {
+	email := mux.Vars(r)["email"]
+	ret, err := verifier.Verify(email)
 	if err != nil {
 		http.Error(w, err.Error(), 500)
 		return
@@ -32,10 +41,24 @@ func GetEmailVerification(w http.ResponseWriter, r *http.Request, ps httprouter.
 
 }
 
+var gorillaLambda *gorillamux.GorillaMuxAdapter
+
+func init() {
+
+	r := mux.NewRouter()
+
+	r.HandleFunc("/v1/{email}/verification", GetEmailVerification).Methods("GET")
+	// func(w http.ResponseWriter, r *http.Request) {
+	// 	json.NewEncoder(w).Encode("")
+	// })
+
+	gorillaLambda = gorillamux.New(r)
+}
+
+func Handler(ctx context.Context, req events.APIGatewayProxyRequest) (events.APIGatewayProxyResponse, error) {
+	r, err := gorillaLambda.ProxyWithContext(ctx, *core.NewSwitchableAPIGatewayRequestV1(&req))
+	return *r.Version1(), err
+}
 func main() {
-	router := httprouter.New()
-
-	router.GET("/v1/:email/verification", GetEmailVerification)
-
-	log.Fatal(http.ListenAndServe(":8080", router))
+	lambda.Start(Handler)
 }
